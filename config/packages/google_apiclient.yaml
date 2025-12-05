@@ -1,0 +1,6 @@
+services:
+    Google\Client:
+        class: Google\Client
+        calls:
+            # Authentication with "API key"
+            - [setDeveloperKey, ['%env(GOOGLE_API_KEY)%']]

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner de Code-Barres</title>
+    {% block javascripts %}
+        {% block importmap %}{{ importmap('app') }}{% endblock %}
+    {% endblock %}
+</head>
+<body>
+<h1>Scanner de Code-Barres</h1>
+
+{# Le contrôleur Stimulus est attaché ici avec les URLs en valeurs #}
+<div data-controller="barcode-scanner"
+     data-barcode-scanner-check-url-value="{{ path('app_barcode_scanner_check') }}"
+     data-barcode-scanner-search-url-value="{{ path('app_barcode_scanner_search') }}"
+     data-barcode-scanner-save-url-value="{{ path('app_barcode_scanner_save') }}">
+
+    <div id="controls">
+        {# Les actions appellent les méthodes du contrôleur #}
+        <button data-barcode-scanner-target="startBtn"
+                data-action="barcode-scanner#start"
+                class="btn btn-primary">Démarrer le scan</button>
+
+        <button data-barcode-scanner-target="stopBtn"
+                data-action="barcode-scanner#stop"
+                class="btn btn-danger hidden">Arrêter le scan</button>
+    </div>
+
+    {# Les targets permettent au JS de trouver les éléments sans ID #}
+    <video data-barcode-scanner-target="video" id="video" autoplay></video>
+
+    {# ID requis pour html5-qrcode, on le laisse, mais on ajoute le target #}
+    <div id="reader" data-barcode-scanner-target="reader"></div>
+
+    <div data-barcode-scanner-target="status" id="status"></div>
+    <div data-barcode-scanner-target="error" class="error"></div>
+    <div data-barcode-scanner-target="method" class="method"></div>
+</div>
+</body>
+</html>
