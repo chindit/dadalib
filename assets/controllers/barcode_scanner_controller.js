@@ -16,6 +16,7 @@ export default class extends Controller {
         this.lastScanTime = 0;
         this.scannerStream = null;
         this.html5QrCode = null;
+        this.isProcessing = false;
     }
 
     disconnect() {
@@ -62,7 +63,7 @@ export default class extends Controller {
 
     async startNativeScanner() {
         this.methodTarget.textContent = 'Méthode: BarcodeDetector API (native)';
-        const barcodeDetector = new BarcodeDetector({ formats: ['ean_13'] });
+        this.barcodeDetector = new BarcodeDetector({ formats: ['ean_13'] });
 
         try {
             this.scannerStream = await navigator.mediaDevices.getUserMedia({
@@ -72,23 +73,31 @@ export default class extends Controller {
             this.videoTarget.style.display = 'block';
             this.statusTarget.textContent = 'Pointez un code-barres vers la caméra';
 
-            const detectLoop = async () => {
-                if (!this.detectionActive) return;
-                try {
-                    const barcodes = await barcodeDetector.detect(this.videoTarget);
-                    if (barcodes.length > 0 && this.detectionActive) {
-                        this.handleDetectedBarcode(barcodes[0].rawValue);
-                    }
-                } catch (err) {
-                    console.error(err);
-                }
-                if (this.detectionActive) requestAnimationFrame(detectLoop);
-            };
-            detectLoop();
+            this.startDetectionLoop();
 
         } catch (err) {
             this.handleError(err);
         }
+    }
+
+    startDetectionLoop() {
+        const detectLoop = async () => {
+            if (!this.detectionActive) return;
+
+            try {
+                const barcodes = await this.barcodeDetector.detect(this.videoTarget);
+                if (barcodes.length > 0 && this.detectionActive && !this.isProcessing) {
+                    await this.handleDetectedBarcode(barcodes[0].rawValue);
+                }
+            } catch (err) {
+                console.error('Detection error:', err);
+            }
+
+            if (this.detectionActive) {
+                requestAnimationFrame(detectLoop);
+            }
+        };
+        detectLoop();
     }
 
     async startLibraryScanner() {
@@ -103,7 +112,9 @@ export default class extends Controller {
                 { facingMode: "environment" },
                 { fps: 10, qrbox: { width: 250, height: 250 } },
                 (decodedText) => {
-                    if (this.detectionActive) this.handleDetectedBarcode(decodedText);
+                    if (this.detectionActive && !this.isProcessing) {
+                        this.handleDetectedBarcode(decodedText);
+                    }
                 },
                 () => {} // Ignore errors
             );
@@ -125,47 +136,93 @@ export default class extends Controller {
 
         this.lastScannedISBN = isbn;
         this.lastScanTime = now;
-        this.detectionActive = false; // Pause
+
+        // ARRÊTER LE SCAN pendant le traitement
+        this.isProcessing = true;
+        this.pauseScanning();
 
         this.statusTarget.textContent = `ISBN détecté: ${isbn}`;
+        console.log('🔍 Traitement de l\'ISBN:', isbn);
 
         try {
             // 1. Check DB
+            this.statusTarget.textContent = 'Vérification dans la base de données...';
             const checkRes = await this.postJson(this.checkUrlValue, { isbn });
+
             if (checkRes.exists) {
-                alert('Ce livre existe déjà !');
-                this.resetDetection();
+                alert(`Ce livre existe déjà !\n"${checkRes.book.title}"`);
                 return;
             }
 
             // 2. Search Google
-            this.statusTarget.textContent = 'Recherche Google Books...';
+            this.statusTarget.textContent = 'Recherche sur Google Books...';
             const searchRes = await this.postJson(this.searchUrlValue, { isbn });
 
             if (searchRes.error) {
-                alert('Livre introuvable.');
-                this.resetDetection();
+                alert('Aucun livre trouvé pour cet ISBN.');
                 return;
             }
 
             // 3. Confirm & Save
-            const confirmMsg = `Ajouter "${searchRes.title}" ?`;
+            const authors = searchRes.authors?.join(', ') || 'Auteur inconnu';
+            const confirmMsg = `Titre: ${searchRes.title}\nAuteur(s): ${authors}\n\nVoulez-vous ajouter ce livre à votre bibliothèque ?`;
+
             if (confirm(confirmMsg)) {
+                this.statusTarget.textContent = 'Ajout du livre...';
                 await this.postJson(this.saveUrlValue, { isbn });
-                alert('Livre ajouté !');
+                alert('Livre ajouté avec succès !');
+                this.statusTarget.textContent = `Ajouté: ${searchRes.title}`;
+            } else {
+                this.statusTarget.textContent = 'Ajout annulé';
             }
 
         } catch (e) {
-            console.error(e);
+            console.error('Erreur:', e);
             this.errorTarget.textContent = e.message || 'Erreur inconnue';
+            alert(`Erreur: ${e.message || 'Erreur inconnue'}`);
         } finally {
-            this.resetDetection();
+            // REPRENDRE LE SCAN après le traitement
+            this.isProcessing = false;
+            this.resumeScanning();
+            console.log('✅ Scan repris');
         }
     }
 
-    resetDetection() {
+    pauseScanning() {
+        console.log('⏸️  Scan en pause');
+        this.detectionActive = false;
+
+        // Pour html5-qrcode, on peut utiliser pause() s'il existe
+        if (this.html5QrCode && typeof this.html5QrCode.pause === 'function') {
+            try {
+                this.html5QrCode.pause(true);
+            } catch (e) {
+                console.warn('Pause not supported:', e);
+            }
+        }
+    }
+
+    resumeScanning() {
+        console.log('▶️  Reprise du scan dans 1 seconde...');
         this.statusTarget.textContent = 'Prêt à scanner...';
-        setTimeout(() => { this.detectionActive = true; }, 1000);
+
+        setTimeout(() => {
+            this.detectionActive = true;
+
+            // Pour html5-qrcode, reprendre s'il était en pause
+            if (this.html5QrCode && typeof this.html5QrCode.resume === 'function') {
+                try {
+                    this.html5QrCode.resume();
+                } catch (e) {
+                    console.warn('Resume not supported:', e);
+                }
+            }
+
+            // Pour native scanner, redémarrer la loop
+            if (this.barcodeDetector && this.videoTarget.srcObject) {
+                this.startDetectionLoop();
+            }
+        }, 1000);
     }
 
     async postJson(url, data) {
