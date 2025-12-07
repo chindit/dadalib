@@ -26,6 +26,18 @@ export default class extends Controller {
     async start() {
         if (this.isScanning) return;
 
+        // Vérifier que getUserMedia est disponible
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost';
+            if (!isSecure) {
+                alert('⚠️ HTTPS requis\n\nLa caméra nécessite une connexion sécurisée (HTTPS) sur mobile.');
+                this.errorTarget.textContent = 'HTTPS requis pour utiliser la caméra.';
+                return;
+            }
+            this.errorTarget.textContent = 'Votre navigateur ne supporte pas l\'accès à la caméra.';
+            return;
+        }
+
         this.isScanning = true;
         this.detectionActive = true;
         this.toggleButtons(true);
@@ -57,11 +69,29 @@ export default class extends Controller {
             ? 'Méthode: BarcodeDetector API (native)'
             : 'Méthode: BarcodeDetector API (polyfill)';
 
-        this.barcodeDetector = new BarcodeDetector({ formats: ['ean_13'] });
+        // Supporter plusieurs formats de codes-barres pour les livres
+        const formats = [
+            'ean_13',      // ISBN-13 (le plus courant)
+            'ean_8',       // ISBN-8
+            'upc_a',       // Code UPC américain
+            'upc_e',       // Code UPC compact
+            'code_128',    // Code 128 (parfois utilisé)
+            'code_39',     // Code 39
+            'code_93',     // Code 93
+            'codabar',     // Codabar
+            'itf'          // Interleaved 2 of 5
+        ];
+
+        this.barcodeDetector = new BarcodeDetector({ formats });
 
         try {
+            // Demander une résolution plus élevée pour une meilleure détection
             this.scannerStream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment' }
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                }
             });
             this.videoTarget.srcObject = this.scannerStream;
             this.videoTarget.style.display = 'block';
@@ -88,9 +118,16 @@ export default class extends Controller {
 
             try {
                 const barcodes = await this.barcodeDetector.detect(this.videoTarget);
-                console.log('DETECTED ', barcodes);
-                if (barcodes.length > 0 && this.detectionActive && !this.isProcessing) {
-                    await this.handleDetectedBarcode(barcodes[0].rawValue);
+
+                if (barcodes.length > 0) {
+                    // Log pour debug : voir tous les codes détectés
+                    barcodes.forEach(barcode => {
+                        console.log(`📊 Détecté: ${barcode.rawValue} (format: ${barcode.format})`);
+                    });
+
+                    if (this.detectionActive && !this.isProcessing) {
+                        await this.handleDetectedBarcode(barcodes[0].rawValue);
+                    }
                 }
             } catch (err) {
                 console.error('Detection error:', err);
@@ -198,7 +235,32 @@ export default class extends Controller {
     }
 
     handleError(err) {
-        this.errorTarget.textContent = `Erreur caméra: ${err.message || err}`;
+        console.error('Camera error:', err);
+
+        let errorMessage = 'Erreur caméra: ';
+
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            errorMessage = '⚠️ Accès à la caméra refusé.\n\n';
+            errorMessage += '1. Cliquez sur l\'icône 🔒 ou ⓘ dans la barre d\'adresse\n';
+            errorMessage += '2. Autorisez l\'accès à la caméra\n';
+            errorMessage += '3. Rechargez la page';
+            alert(errorMessage);
+            this.errorTarget.textContent = 'Accès caméra refusé. Veuillez autoriser l\'accès.';
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+            errorMessage = 'Aucune caméra trouvée sur cet appareil.';
+            this.errorTarget.textContent = errorMessage;
+        } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+            errorMessage = 'La caméra est déjà utilisée par une autre application.';
+            this.errorTarget.textContent = errorMessage;
+        } else if (err.name === 'NotSupportedError') {
+            errorMessage = '⚠️ HTTPS requis pour accéder à la caméra.\n\n';
+            errorMessage += 'Cette fonctionnalité nécessite une connexion sécurisée (HTTPS).';
+            alert(errorMessage);
+            this.errorTarget.textContent = 'HTTPS requis pour la caméra.';
+        } else {
+            this.errorTarget.textContent = `Erreur caméra: ${err.message || err.name || err}`;
+        }
+
         this.stop();
     }
 
