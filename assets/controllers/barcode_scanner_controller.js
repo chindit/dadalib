@@ -1,8 +1,8 @@
 import { Controller } from '@hotwired/stimulus';
-import { Html5Qrcode } from 'html5-qrcode';
+import 'barcode-detector';
 
 export default class extends Controller {
-    static targets = ['video', 'reader', 'startBtn', 'stopBtn', 'status', 'error', 'method'];
+    static targets = ['video', 'startBtn', 'stopBtn', 'status', 'error', 'method'];
     static values = {
         checkUrl: String,
         searchUrl: String,
@@ -15,7 +15,7 @@ export default class extends Controller {
         this.lastScannedISBN = null;
         this.lastScanTime = 0;
         this.scannerStream = null;
-        this.html5QrCode = null;
+        this.barcodeDetector = null;
         this.isProcessing = false;
     }
 
@@ -32,11 +32,7 @@ export default class extends Controller {
         this.statusTarget.textContent = 'Initialisation...';
         this.errorTarget.textContent = '';
 
-        if ('BarcodeDetector' in window) {
-            await this.startNativeScanner();
-        } else {
-            await this.startLibraryScanner();
-        }
+        await this.startNativeScanner();
     }
 
     stop() {
@@ -44,25 +40,23 @@ export default class extends Controller {
         this.detectionActive = false;
         this.toggleButtons(false);
 
-        // Stop Native
+        // Arrêter le flux vidéo
         if (this.scannerStream) {
             this.scannerStream.getTracks().forEach(track => track.stop());
             this.scannerStream = null;
             this.videoTarget.style.display = 'none';
         }
 
-        // Stop Library
-        if (this.html5QrCode) {
-            this.html5QrCode.stop().catch(err => console.error(err));
-            this.readerTarget.style.display = 'none';
-            this.html5QrCode = null;
-        }
-
+        this.barcodeDetector = null;
         this.statusTarget.textContent = 'Scan arrêté';
     }
 
     async startNativeScanner() {
-        this.methodTarget.textContent = 'Méthode: BarcodeDetector API (native)';
+        const isNative = 'BarcodeDetector' in window && window.BarcodeDetector.toString().includes('[native code]');
+        this.methodTarget.textContent = isNative
+            ? 'Méthode: BarcodeDetector API (native)'
+            : 'Méthode: BarcodeDetector API (polyfill)';
+
         this.barcodeDetector = new BarcodeDetector({ formats: ['ean_13'] });
 
         try {
@@ -71,8 +65,16 @@ export default class extends Controller {
             });
             this.videoTarget.srcObject = this.scannerStream;
             this.videoTarget.style.display = 'block';
-            this.statusTarget.textContent = 'Pointez un code-barres vers la caméra';
 
+            // Attendre que la vidéo soit prête avant de démarrer la détection
+            await new Promise((resolve) => {
+                this.videoTarget.addEventListener('loadedmetadata', resolve, { once: true });
+            });
+
+            // S'assurer que la vidéo est en train de jouer
+            await this.videoTarget.play();
+
+            this.statusTarget.textContent = 'Pointez un code-barres vers la caméra';
             this.startDetectionLoop();
 
         } catch (err) {
@@ -86,6 +88,7 @@ export default class extends Controller {
 
             try {
                 const barcodes = await this.barcodeDetector.detect(this.videoTarget);
+                console.log('DETECTED ', barcodes);
                 if (barcodes.length > 0 && this.detectionActive && !this.isProcessing) {
                     await this.handleDetectedBarcode(barcodes[0].rawValue);
                 }
@@ -98,30 +101,6 @@ export default class extends Controller {
             }
         };
         detectLoop();
-    }
-
-    async startLibraryScanner() {
-        this.methodTarget.textContent = 'Méthode: html5-qrcode (fallback)';
-        this.videoTarget.style.display = 'none';
-        this.readerTarget.style.display = 'block';
-
-        this.html5QrCode = new Html5Qrcode(this.readerTarget.id);
-
-        try {
-            await this.html5QrCode.start(
-                { facingMode: "environment" },
-                { fps: 10, qrbox: { width: 250, height: 250 } },
-                (decodedText) => {
-                    if (this.detectionActive && !this.isProcessing) {
-                        this.handleDetectedBarcode(decodedText);
-                    }
-                },
-                () => {} // Ignore errors
-            );
-            this.statusTarget.textContent = 'Pointez un code-barres vers la caméra';
-        } catch (err) {
-            this.handleError(err);
-        }
     }
 
     async handleDetectedBarcode(rawIsbn) {
@@ -191,15 +170,6 @@ export default class extends Controller {
     pauseScanning() {
         console.log('⏸️  Scan en pause');
         this.detectionActive = false;
-
-        // Pour html5-qrcode, on peut utiliser pause() s'il existe
-        if (this.html5QrCode && typeof this.html5QrCode.pause === 'function') {
-            try {
-                this.html5QrCode.pause(true);
-            } catch (e) {
-                console.warn('Pause not supported:', e);
-            }
-        }
     }
 
     resumeScanning() {
@@ -209,16 +179,7 @@ export default class extends Controller {
         setTimeout(() => {
             this.detectionActive = true;
 
-            // Pour html5-qrcode, reprendre s'il était en pause
-            if (this.html5QrCode && typeof this.html5QrCode.resume === 'function') {
-                try {
-                    this.html5QrCode.resume();
-                } catch (e) {
-                    console.warn('Resume not supported:', e);
-                }
-            }
-
-            // Pour native scanner, redémarrer la loop
+            // Redémarrer la boucle de détection
             if (this.barcodeDetector && this.videoTarget.srcObject) {
                 this.startDetectionLoop();
             }

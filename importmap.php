@@ -16,13 +16,13 @@ return [
         'path' => './assets/app.js',
         'entrypoint' => true,
     ],
-    'html5-qrcode' => [
-        'version' => '2.3.8',
-    ],
     '@hotwired/stimulus' => [
         'version' => '3.2.2',
     ],
     '@symfony/stimulus-bundle' => [
         'path' => './vendor/symfony/stimulus-bundle/assets/dist/loader.js',
+    ],
+    'barcode-detector' => [
+        'version' => '3.0.8',
     ],
 ];

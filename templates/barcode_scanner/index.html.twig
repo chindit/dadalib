@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scanner de Code-Barres</title>
+    <link rel="stylesheet" href="{{ asset('styles/barcode-scanner.css') }}">
     {% block javascripts %}
         {% block importmap %}{{ importmap('app') }}{% endblock %}
     {% endblock %}
@@ -28,13 +29,10 @@
                 class="btn btn-danger hidden">Arrêter le scan</button>
     </div>
 
-    {# Les targets permettent au JS de trouver les éléments sans ID #}
-    <video data-barcode-scanner-target="video" id="video" autoplay></video>
+    {# Élément vidéo pour le scanner BarcodeDetector #}
+    <video data-barcode-scanner-target="video" autoplay></video>
 
-    {# ID requis pour html5-qrcode, on le laisse, mais on ajoute le target #}
-    <div id="reader" data-barcode-scanner-target="reader"></div>
-
-    <div data-barcode-scanner-target="status" id="status"></div>
+    <div data-barcode-scanner-target="status"></div>
     <div data-barcode-scanner-target="error" class="error"></div>
     <div data-barcode-scanner-target="method" class="method"></div>
 </div>
