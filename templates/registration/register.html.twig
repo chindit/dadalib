@@ -3,17 +3,46 @@
 {% block title %}Register{% endblock %}
 
 {% block body %}
-    <h1>Register</h1>
-
     {{ form_errors(registrationForm) }}
 
-    {{ form_start(registrationForm) }}
-        {{ form_row(registrationForm.username) }}
-        {{ form_row(registrationForm.plainPassword, {
-            label: 'Password'
-        }) }}
-        {{ form_row(registrationForm.agreeTerms) }}
+    <wa-card style="max-width: 45ch; margin: 0 auto">
+        <div class="wa-stack">
+            {{ form_start(registrationForm, {'attr': {'id': 'register-form'}}) }}
+            <h2 class="wa-heading-l">Register</h2>
+            <wa-input label="Username" name="{{ field_name(registrationForm.username) }}" type="text"></wa-input>
+            {{ form_errors(registrationForm.username) }}
+            {% do registrationForm.username.setRendered() %}
+            <wa-input
+                label="Password"
+                name="{{ field_name(registrationForm.plainPassword.password) }}"
+                type="password">
+            </wa-input>
+            {{ form_errors(registrationForm.plainPassword.password) }}
+            {% do registrationForm.plainPassword.setRendered() %}
+            <wa-input
+                label="Confirm your password"
+                name="{{ field_name(registrationForm.plainPassword.confirm_password) }}"
+                type="password">
+            </wa-input>
+            {{ form_errors(registrationForm.plainPassword.confirm_password) }}
+            {{ form_errors(registrationForm.plainPassword) }}
+            {% do registrationForm.plainPassword.setRendered() %}
 
-        <button type="submit" class="btn">Register</button>
-    {{ form_end(registrationForm) }}
+            <wa-checkbox name="{{ field_name(registrationForm.agreeTerms) }}" value="1">Agree terms and conditions</wa-checkbox>
+            {{ form_errors(registrationForm.agreeTerms) }}
+            {% do registrationForm.agreeTerms.setRendered() %}
+            {{ form_end(registrationForm) }}
+        </div>
+    </wa-card>
+{% endblock %}
+
+{% block stylesheets %}
+<style>
+ul {
+    li {
+        font-size: small;
+        color: red;
+    }
+}
+</style>
 {% endblock %}
