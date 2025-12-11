@@ -2,7 +2,6 @@
 
 namespace App\Entity;
 
-use ApiPlatform\Metadata\ApiResource;
 use App\Enum\BookFormat;
 use App\Repository\BookRepository;
 use Doctrine\Common\Collections\ArrayCollection;
