@@ -369,4 +369,33 @@ class Book
     {
         $this->updatedAt = new \DateTimeImmutable('now');
     }
+
+    /**
+     * @return Collection<int, UserBook>
+     */
+    public function getUserBooks(): Collection
+    {
+        return $this->userBooks;
+    }
+
+    public function addUserBook(UserBook $userBook): self
+    {
+        if (!$this->userBooks->contains($userBook)) {
+            $this->userBooks->add($userBook);
+            $userBook->setBook($this);
+        }
+
+        return $this;
+    }
+
+    public function removeUserBook(UserBook $userBook): self
+    {
+        if ($this->userBooks->removeElement($userBook)) {
+            if ($userBook->getBook() === $this) {
+                $userBook->setBook(null);
+            }
+        }
+
+        return $this;
+    }
 }

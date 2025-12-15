@@ -4,7 +4,9 @@ namespace App\Controller;
 
 use App\Repository\BookRepository;
 use App\Repository\PersonRepository;
+use App\Repository\UserBookRepository;
 use App\Service\GoogleBookService;
+use App\Entity\UserBook;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -26,7 +28,8 @@ final class BarcodeScannerController extends AbstractController
     public function search(
         Request $request,
         GoogleBookService $googleBookService,
-        ValidatorInterface $validator
+        ValidatorInterface $validator,
+        BookRepository $bookRepository
     ): JsonResponse {
         $isbn = $request->getPayload()->get('isbn');
 
@@ -52,8 +55,16 @@ final class BarcodeScannerController extends AbstractController
             ], Response::HTTP_BAD_REQUEST);
         }
 
-        // Search for the book
-        $book = $googleBookService->searchByIsbn($isbn);
+        // Clean ISBN (remove spaces and dashes)
+        $cleanIsbn = str_replace(['-', ' '], '', $isbn);
+
+        // 1) Try to find the book locally first
+        $book = $bookRepository->findOneByIsbn13($cleanIsbn);
+
+        // 2) If not found locally, search Google Books
+        if ($book === null) {
+            $book = $googleBookService->searchByIsbn($cleanIsbn);
+        }
 
         if ($book === null) {
             return $this->json([
@@ -83,7 +94,8 @@ final class BarcodeScannerController extends AbstractController
     #[Route('/barcode/scanner/check', name: 'app_barcode_scanner_check', methods: ['POST'])]
     public function check(
         Request $request,
-        BookRepository $bookRepository
+        BookRepository $bookRepository,
+        UserBookRepository $userBookRepository
     ): JsonResponse {
         $isbn = $request->getPayload()->get('isbn');
 
@@ -93,25 +105,40 @@ final class BarcodeScannerController extends AbstractController
             ], Response::HTTP_BAD_REQUEST);
         }
 
+        // Ensure user is authenticated
+        $user = $this->getUser();
+        if (!$user) {
+            return $this->json([
+                'error' => 'Authentication required'
+            ], Response::HTTP_UNAUTHORIZED);
+        }
+
         // Clean ISBN (remove spaces and dashes)
         $cleanIsbn = str_replace(['-', ' '], '', $isbn);
 
         // Check if book exists in database
         $book = $bookRepository->findOneByIsbn13($cleanIsbn);
 
-        if ($book) {
+        if (!$book) {
             return $this->json([
-                'exists' => true,
-                'book' => [
-                    'id' => $book->getId(),
-                    'title' => $book->getTitle(),
-                    'isbn13' => $book->getIsbn13()
-                ]
+                'exists' => false,
+                'owned' => false
             ]);
         }
 
+        $owned = (bool) $userBookRepository->findOneBy([
+            'user' => $user,
+            'book' => $book,
+        ]);
+
         return $this->json([
-            'exists' => false
+            'exists' => true,
+            'owned' => $owned,
+            'book' => [
+                'id' => $book->getId(),
+                'title' => $book->getTitle(),
+                'isbn13' => $book->getIsbn13()
+            ]
         ]);
     }
 
@@ -122,7 +149,8 @@ final class BarcodeScannerController extends AbstractController
         BookRepository $bookRepository,
         PersonRepository $personRepository,
         EntityManagerInterface $entityManager,
-        ValidatorInterface $validator
+        ValidatorInterface $validator,
+        UserBookRepository $userBookRepository
     ): JsonResponse {
         $isbn = $request->getPayload()->get('isbn');
 
@@ -148,54 +176,74 @@ final class BarcodeScannerController extends AbstractController
             ], Response::HTTP_BAD_REQUEST);
         }
 
+        // Ensure user is authenticated
+        $user = $this->getUser();
+        if (!$user) {
+            return $this->json([
+                'error' => 'Authentication required'
+            ], Response::HTTP_UNAUTHORIZED);
+        }
+
         // Clean ISBN
         $cleanIsbn = str_replace(['-', ' '], '', $isbn);
 
-        // Check if book already exists
-        $existingBook = $bookRepository->findOneByIsbn13($cleanIsbn);
-        if ($existingBook) {
-            return $this->json([
-                'error' => 'Book already exists in database'
-            ], Response::HTTP_CONFLICT);
-        }
+        // Find or create the Book
+        $book = $bookRepository->findOneByIsbn13($cleanIsbn);
+        $wasCreated = false;
 
-        // Search for the book on Google Books
-        $book = $googleBookService->searchByIsbn($isbn);
+        if (!$book) {
+            // Search for the book on Google Books
+            $book = $googleBookService->searchByIsbn($cleanIsbn);
 
-        if ($book === null) {
-            return $this->json([
-                'error' => 'No book found for this ISBN'
-            ], Response::HTTP_NOT_FOUND);
-        }
-
-        try {
-            // Handle authors - persist them separately
-            $authors = $book->getAuthors()->toArray();
-            $book->getAuthors()->clear();
-
-            foreach ($authors as $author) {
-                $persistedAuthor = $personRepository->findOrCreateByDisplayName($author->getDisplayName());
-                $book->addAuthor($persistedAuthor);
+            if ($book === null) {
+                return $this->json([
+                    'error' => 'No book found for this ISBN'
+                ], Response::HTTP_NOT_FOUND);
             }
 
-            // Persist the book
-            $entityManager->persist($book);
-            $entityManager->flush();
+            try {
+                // Handle authors - persist them separately
+                $authors = $book->getAuthors()->toArray();
+                $book->getAuthors()->clear();
 
-            return $this->json([
-                'success' => true,
-                'book' => [
-                    'id' => $book->getId(),
-                    'title' => $book->getTitle(),
-                    'isbn13' => $book->getIsbn13()
-                ]
-            ], Response::HTTP_CREATED);
+                foreach ($authors as $author) {
+                    $persistedAuthor = $personRepository->findOrCreateByDisplayName($author->getDisplayName());
+                    $book->addAuthor($persistedAuthor);
+                }
 
-        } catch (\Exception $e) {
-            return $this->json([
-                'error' => 'Failed to save book',
-                'message' => $e->getMessage()
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+                // Persist the book
+                $entityManager->persist($book);
+                $entityManager->flush();
+                $wasCreated = true;
+            } catch (\Exception $e) {
+                return $this->json([
+                    'error' => 'Failed to save book',
+                    'message' => $e->getMessage()
+                ], Response::HTTP_INTERNAL_SERVER_ERROR);
+            }
         }
+
+        // Link the book to the current user if not already linked
+        $existingLink = $userBookRepository->findOneBy([
+            'user' => $user,
+            'book' => $book,
+        ]);
+
+        if (!$existingLink) {
+            $userBook = new UserBook();
+            $userBook->setUser($user);
+            $userBook->setBook($book);
+            $entityManager->persist($userBook);
+            $entityManager->flush();
+        }
+
+        return $this->json([
+            'success' => true,
+            'book' => [
+                'id' => $book->getId(),
+                'title' => $book->getTitle(),
+                'isbn13' => $book->getIsbn13()
+            ]
+        ], $wasCreated ? Response::HTTP_CREATED : Response::HTTP_OK);
     }
 }

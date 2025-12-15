@@ -3,6 +3,8 @@
 namespace App\Entity;
 
 use App\Repository\UserRepository;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Bridge\Doctrine\Validator\Constraints\UniqueEntity;
 use Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface;
@@ -32,6 +34,17 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
      */
     #[ORM\Column]
     private ?string $password = null;
+
+    /**
+     * @var Collection<int, UserBook>
+     */
+    #[ORM\OneToMany(mappedBy: 'user', targetEntity: UserBook::class, cascade: ['persist', 'remove'], orphanRemoval: true)]
+    private Collection $userBooks;
+
+    public function __construct()
+    {
+        $this->userBooks = new ArrayCollection();
+    }
 
     public function getId(): ?int
     {
@@ -106,5 +119,34 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         $data["\0".self::class."\0password"] = hash('crc32c', $this->password);
 
         return $data;
+    }
+
+    /**
+     * @return Collection<int, UserBook>
+     */
+    public function getUserBooks(): Collection
+    {
+        return $this->userBooks;
+    }
+
+    public function addUserBook(UserBook $userBook): static
+    {
+        if (!$this->userBooks->contains($userBook)) {
+            $this->userBooks->add($userBook);
+            $userBook->setUser($this);
+        }
+
+        return $this;
+    }
+
+    public function removeUserBook(UserBook $userBook): static
+    {
+        if ($this->userBooks->removeElement($userBook)) {
+            if ($userBook->getUser() === $this) {
+                $userBook->setUser(null);
+            }
+        }
+
+        return $this;
     }
 }
